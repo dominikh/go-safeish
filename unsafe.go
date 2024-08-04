@@ -2,6 +2,7 @@
 package safeish
 
 import (
+	"strings"
 	"unsafe"
 
 	"golang.org/x/exp/constraints"
@@ -80,4 +81,34 @@ func Index[E any, S ~[]E, Int constraints.Integer](ptr S, idx Int) *E {
 // ptr.
 func AsBytes[E any, T *E](ptr T) []byte {
 	return unsafe.Slice((*byte)(unsafe.Pointer(ptr)), unsafe.Sizeof(*ptr))
+}
+
+func FindNull(s *byte) int {
+	if s == nil {
+		return 0
+	}
+
+	// pageSize is the unit we scan at a time looking for NULL.
+	// It must be the minimum page size for any architecture Go
+	// runs on. It's okay (just a minor performance loss) if the
+	// actual system page size is larger than this value.
+	const pageSize = 4096
+
+	offset := 0
+	ptr := unsafe.Pointer(s)
+	// IndexByteString uses wide reads, so we need to be careful
+	// with page boundaries. Call IndexByteString on
+	// [ptr, endOfPage) interval.
+	safeLen := int(pageSize - uintptr(ptr)%pageSize)
+	for {
+		t := unsafe.String((*byte)(ptr), safeLen)
+		// Check one page at a time.
+		if i := strings.IndexByte(t, 0); i != -1 {
+			return offset + i
+		}
+		// Move to next page
+		ptr = unsafe.Pointer(uintptr(ptr) + uintptr(safeLen))
+		offset += safeLen
+		safeLen = pageSize
+	}
 }
