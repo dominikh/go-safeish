@@ -2,6 +2,7 @@
 package safeish
 
 import (
+	"fmt"
 	"strings"
 	"unsafe"
 
@@ -111,4 +112,39 @@ func FindNull(s *byte) int {
 		offset += safeLen
 		safeLen = pageSize
 	}
+}
+
+// SliceCastPtr casts a slice of underlying type []SrcE to a pointer of
+// underlying type *DstE to the slice's first element, or nil if the slice's
+// capacity is 0. It ensures that the pointer doesn't extend past the end of the
+// slice.
+func SliceCastPtr[Dst ~*DstE, Src ~[]SrcE, DstE, SrcE any](x Src) Dst {
+	if cap(x) == 0 {
+		return nil
+	}
+	type sliceHeader struct {
+		data unsafe.Pointer
+		len  int
+		cap  int
+	}
+
+	sizeSrc := unsafe.Sizeof(*new(SrcE))
+	sizeDst := unsafe.Sizeof(*new(DstE))
+
+	if sizeSrc != sizeDst {
+		// This check gets eliminated by the compiler when the sizes match, but
+		// the inliner doesn't know that. GOEXPERIMENT=newinliner claims that
+		// this function is inlinable, but it doesn't actually get inlined.
+
+		if sz := int(sizeSrc) * cap(x); sz < int(sizeDst) {
+			panic(
+				fmt.Sprintf("slice has capacity of %d bytes, but a single %T is %d bytes",
+					sz, *new(DstE), sizeDst))
+		}
+	}
+
+	// This way of getting the pointer has lower inlining complexity than
+	// &x[:1][0]
+	ptrDst := (*sliceHeader)(unsafe.Pointer(&x)).data
+	return Dst(ptrDst)
 }
